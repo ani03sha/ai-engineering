@@ -96,6 +96,31 @@ class BytePairEncoding:
             print(f"{index + 1}: {m}")
         
         return corpus
+    
+    def encode(self, word: str) -> list[str]:
+        """
+        Encode a single word using learned BPE merges
+        """
+        symbols = list(word) + ["</w>"]
+        
+        for pair in self.merges:
+            i = 0
+            while i < len(symbols) - 1:
+                if (symbols[i], symbols[i + 1]) == pair:
+                    merged = "".join(pair)
+                    symbols[i:i+2] = [merged]
+                else:
+                    i += 1
+        
+        return symbols
+    
+    def decode(self, tokens: list[str]) -> str:
+        """
+        Decode tokens back to the string (removes </w> markers).
+        """
+        text = "".join(tokens)
+        return text.replace("</w>", "").strip()
+        
         
         
 def main():
@@ -112,10 +137,22 @@ def main():
 
     # Train BPE
     final_corpus = bpe.train(corpus, num_merges=10)
-
-    print("\nFinal Corpus:")
-    for w, f in final_corpus.items():
-        print(w, ":", f)
+    print("Final Corpus: ", final_corpus)
+    
+    # Encode a word
+    encoded = bpe.encode("lowest")
+    print("Encoded:", encoded)
+    
+    # Decode back
+    decoded = bpe.decode(encoded)
+    print("Decoded:", decoded)
+    
+    # Test new word
+    encoded = bpe.encode("slowest")
+    print("Encoded new word:", encoded)
+    
+    decoded = bpe.decode(encoded)
+    print("Decoded new word:", decoded)
     
 
 if __name__ == "__main__":
