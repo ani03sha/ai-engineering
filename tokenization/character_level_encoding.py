@@ -1,9 +1,6 @@
 """
-Imagine your text corpus is just this one sentence: "the cat sat on the mat"
-
-Let's start with character-level tokenization — i.e., map each unique character to an integer.
-
-How would you go about building such a mapping in code (you can describe it or outline pseudocode)?
+The corpus is given in the form of text (or list of texts).
+In character level tokenization, we will map each unique character to an integer (token).
 """
 
 from typing import Iterable
@@ -18,8 +15,11 @@ class CharacterTokenization:
         # Index to keep track for next integer to assign
         self.index: int = 0
 
-
-    def fit(self, corpus: list[str]) -> None:
+    def fit_corpus(self, corpus: list[str]) -> None:
+        """
+        Fits the corpus of texts to integer tokens.
+        This is the learning phase
+        """
         # Traverse through each character in the text
         for text in corpus:
             for char in text:
@@ -28,8 +28,10 @@ class CharacterTokenization:
                     self.reverse_mappings[self.index] = char
                     self.index += 1
 
-
     def encode(self, text: str) -> list[int]:
+        """
+        Encodes the query string to tokens from already learned symbols.
+        """
         # List to hold the encoded integers
         encoded: list[int] = []
         for char in text:
@@ -39,8 +41,10 @@ class CharacterTokenization:
                 raise KeyError(f"Unknown character: {char!r}")
         return encoded
 
-
     def decode(self, encoded: Iterable[int]) -> str:
+        """
+        Converts tokens back to text.
+        """
         # String to hold decoded word
         decoded: str = ""
         for token in encoded:
@@ -52,8 +56,8 @@ def main():
     corpus = ["the cat sat on the mat"]
     character_tokenization = CharacterTokenization()
     # Tokenize the corpus
-    character_tokenization.fit(corpus)
-    
+    character_tokenization.fit_corpus(corpus)
+
     # Encode
     encoded = character_tokenization.encode("the cat")
     print("Encoded:", encoded)

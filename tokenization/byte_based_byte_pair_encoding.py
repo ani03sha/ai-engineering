@@ -11,8 +11,12 @@ from typing import Any
 
 
 class ByteBytePairEncoding:
+    """
+    Operates directly on bytes → zero OOV risk.
+    Handles Unicode seamlessly (English, Hindi, emojis, code, etc.).
+    """
     def __init__(self):
-        pass
+        self.merges: list[tuple[Any, Any]] = []
 
     def fit_corpus(self, corpus: list[str]) -> dict[tuple[int | str, ...], int]:
         """
@@ -58,6 +62,9 @@ class ByteBytePairEncoding:
     def merge_most_frequent_pair(
         self, corpus: dict[tuple[Any, ...], int], target_pair: tuple[Any, Any]
     ) -> dict[tuple[Any, ...], int]:
+        """
+        Merges the most frequent pair
+        """
         updated_corpus: dict[tuple[int | str | tuple, ...], int] = {}
         for word_symbols, frequency in corpus.items():
             symbols = list(word_symbols)
@@ -96,7 +103,6 @@ class ByteBytePairEncoding:
         corpus: dict of symbol sequences -> frequency
         num_merges: number of merge operations to perform
         """
-        self.merges: list[tuple[Any, Any]] = []
         
         # Train for num_merges iteration
         for i in range(num_merges):

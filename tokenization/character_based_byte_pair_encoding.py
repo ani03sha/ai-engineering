@@ -1,9 +1,13 @@
 from collections import Counter
 
-
 class BytePairEncoding:
+    """
+    Breaks words into statistically common fragments.
+    Keeps vocabulary manageable (30k-100k tokens).
+    Retains generality across languages, symbols, and even code.
+    """
     def __init__(self):
-        pass
+        self.merges: list[tuple[str, str]] = []
     
     
     def fit_corpus(self, corpus: list[str]) -> dict[tuple[str, ...], int]:
@@ -70,7 +74,6 @@ class BytePairEncoding:
         corpus: dict of symbol sequences -> frequency
         num_merges: number of merge operations to perform
         """
-        self.merges: list[tuple[str, str]] = []
         
         # Train for num_merges iterations
         for i in range(num_merges):
