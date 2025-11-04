@@ -2,6 +2,9 @@ import random
 import time
 import numpy as np
 from collections import Counter
+from sklearn.decomposition import PCA
+import matplotlib.pyplot as plt
+import wikipedia
 
 
 # ---------------------- Tokenizer ---------------------- #
@@ -279,33 +282,102 @@ class Trainer:
         ]
 
 
+# ---------------------- Trainer ---------------------- #
+class Visualizer:
+    """
+    Projects learned embeddings into 2D and visualizes them.
+    """
+
+    def __init__(self, model: Word2Vec, tokenizer: Tokenizer):
+        self.model = model
+        self.tokenizer = tokenizer
+
+    def plot_embeddings(self, topK: int = 15):
+        """
+        Plots the top k most frequent words in 2D using PCA.
+        """
+        vocabulary_size = len(self.tokenizer.vocabulary)
+        n = min(topK, vocabulary_size)
+
+        # Extract embeddings
+        words = list(self.tokenizer.vocabulary)[:n]
+        indices = [self.tokenizer.word_to_index[word] for word in words]
+        vectors = self.model.W_in
+
+        # Reduce to 2D
+        pca = PCA(n_components=2)
+        reduced = pca.fit_transform(vectors)
+
+        # Plot
+        plt.figure(figsize=(8, 6))
+        plt.scatter(reduced[:, 0] + 0.02, reduced[:, 1], c="steelblue", s=50)
+
+        for i, word in enumerate(words):
+            plt.text(reduced[i, 0], reduced[i, 1] + 0.02, word, fontsize=12)
+
+        plt.title("Word Embeddings Projection (PCA)")
+        plt.xlabel("PC1")
+        plt.ylabel("PC2")
+        plt.grid(True)
+        plt.show()
+
+
+# ---------------------- Wikipedia ---------------------- #
+def load_wikipedia_corpus(query="Machine Learning", n_articles=5):
+    """
+    Fetches summary paragraphs from a few Wikipedia articles.
+    """
+    sentences = []
+    topics = [
+        query,
+        "Artificial intelligence",
+        "Deep learning",
+        "Neural network",
+        "Data science",
+    ]
+    for topic in topics[:n_articles]:
+        try:
+            text = wikipedia.page(topic).content
+            paragraphs = text.split("\n")
+            for paragraph in paragraphs:
+                if len(paragraph.split()) > 5:  # Skip short lines
+                    sentences.append(paragraph.lower())
+        except Exception as e:
+            print(f"Skipping {topic}: {e}")
+
+    print(f"✅ Loaded {len(sentences)} Wikipedia sentences.")
+    return sentences
+
+
 def main():
     random.seed(42)
     np.random.seed(42)  # To make runs reproducible
 
-    corpus = [
-        "the player kicked the ball",
-        "the team won the match",
-        "the coach praised the player",
-        "the match was exciting",
-        "the player scored a goal",
-        "the goal won the game",
-    ]
+    # Load wikipedia corpus
+    corpus = load_wikipedia_corpus("Machine Learning", n_articles=5)
 
     tokenizer = Tokenizer(corpus).build_vocabulary()
+    
     dataset = Dataset(
-        tokenizer.get_encoded_corpus(), vocabulary_size=len(tokenizer.vocabulary)
+        tokenizer.get_encoded_corpus(),
+        vocabulary_size=len(tokenizer.vocabulary),
+        window_size=5,
+        negative_samples=10
     )
+
     model = Word2Vec(
         vocabulary_size=len(tokenizer.vocabulary),
-        embedding_dimensions=10,
-        learning_rate=0.025,
+        embedding_dimensions=50,
+        learning_rate=0.01
     )
 
     trainer = Trainer(model, dataset, tokenizer)
-    trainer.train(epochs=10, batch_size=8, log_interval=5)
+    trainer.train(epochs=10, batch_size=128, log_interval=50)
 
-    print("\nMost similar to 'player':", trainer.most_similar("player"))
+    print(trainer.most_similar("intelligence"))
+    print(trainer.most_similar("data"))
+    visualizer = Visualizer(model, tokenizer)
+    visualizer.plot_embeddings(topK=50)
 
 
 if __name__ == "__main__":
