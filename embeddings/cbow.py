@@ -1,5 +1,6 @@
 import random
 import time
+from typing import Self
 import numpy as np
 from collections import Counter
 from sklearn.decomposition import PCA
@@ -24,9 +25,10 @@ class Tokenizer:
         self.index_to_word: dict[int, str] = None
         self.encoded_corpus: list[int] = None
 
-    def build_vocabulary(self, min_frequency: int = 1):
+    def build_vocabulary(self, min_frequency: int = 1) -> Self:
         # Flatten sentences into tokens
         tokens = []
+
         for sentence in self.corpus:
             tokens.extend(sentence.lower().split())
 
@@ -39,11 +41,10 @@ class Tokenizer:
 
         self.vocabulary = vocabulary
         self.word_to_index = {word: index for index, word in enumerate(vocabulary)}
-        self.index_to_word = {index: word for word, index in self.word_to_index.items()}
+        self.index_to_word = {index: word for index, word in self.word_to_index.items()}
 
         # Convert entire corpus into integer ids
         self.encoded_corpus = [self.word_to_index[word] for word in tokens]
-
         print(f"Vocabulary built. Size: {len(self.vocabulary)} words")
 
         return self
@@ -63,7 +64,7 @@ class Tokenizer:
 # ---------------------- Dataset ---------------------- #
 class Dataset:
     """
-    Generates skip-gram (center, context) pairs and negative samples.
+    Generates (context, target) pairs for CBOW training.
     """
 
     def __init__(
@@ -77,68 +78,48 @@ class Dataset:
         self.vocabulary_size = vocabulary_size
         self.window_size = window_size
         self.negative_samples = negative_samples
-
-        # Generate all positive pairs once
-        self.pairs: list[tuple[int, int]] = self._generate_skipgram_pairs()
-        # Build a unigram distribution for negative sampling
         self.word_probabilities = self._build_unigram_table()
 
-    def _generate_skipgram_pairs(self) -> list[tuple[str, str]]:
-        pairs: list[str] = []
-        for center_position, center_word in enumerate(self.encoded_corpus):
-            for w in range(-self.window_size, self.window_size + 1):
-                context_position = center_position + w
-                if (
-                    context_position < 0
-                    or context_position >= len(self.encoded_corpus)
-                    or context_position == center_position
-                ):
-                    continue
-
-                context_word = self.encoded_corpus[context_position]
-                pairs.append((center_word, context_word))
-
-        return pairs
-
     def _build_unigram_table(self) -> list[float]:
-        """
-        Word2Vec uses unigram distribution raised to 3/4 power for sampling.
-        """
-        word_frequency = Counter(self.encoded_corpus)
-
-        # Unigram distribution raised to 3/4
+        word_frequencies = Counter(self.encoded_corpus)
         probabilities = np.zeros(self.vocabulary_size)
         for i in range(self.vocabulary_size):
-            probabilities[i] = word_frequency.get(i, 0) ** 0.75
-
-        probabilities = probabilities / np.sum(probabilities)
-
+            probabilities[i] = word_frequencies.get(i, 0) * 0.75
+        probabilities /= sum(probabilities)
         return probabilities
 
-    def get_batch(self, batch_size: int = 8):
-        """
-        Samples a mini-batch of (center, context) pairs and corresponding negatives.
-        """
-        batch = random.sample(self.pairs, batch_size)
-        centers, contexts = zip(*batch)
+    def get_batch(self, batch_size: int = 0):
+        contexts, targets, negatives = [], [], []
+        for _ in range(batch_size):
+            center_position = np.random.randint(
+                self.window_size, len(self.encoded_corpus) - self.window_size
+            )
+            context = (
+                self.encoded_corpus[
+                    center_position - self.window_size : center_position
+                ]
+                + self.encoded_corpus[
+                    center_position + 1 : center_position + 1 + self.window_size
+                ]
+            )
+            target = self.encoded_corpus[center_position]
+            contexts.append(context)
+            targets.append(target)
+            # Negative sampling
+            negative = np.random.choice(
+                np.arange(self.vocabulary_size),
+                size=self.negative_samples,
+                p=self.word_probabilities,
+            )
+            negatives.append(negative)
 
-        # Sample negatives for each center word
-        negative_samples = np.random.choice(
-            np.arange(self.vocabulary_size),
-            size=(batch_size, self.negative_samples),
-            p=self.word_probabilities,
-        )
-
-        return np.array(centers), np.array(contexts), negative_samples
+        return np.array(contexts), np.array(targets), np.array(negatives)
 
 
-# ---------------------- Word2Vec ---------------------- #
-class Word2Vec:
+# ---------------------- CBOW ---------------------- #
+class CBOW:
     """
-    Skip-gram model with negative sampling (NumPy version).
-    Learns two embedding matrices:
-    - W_in  : center (input) word embeddings
-    - W_out : context (output) word embeddings
+    Continuous Bag of Words model with Negative Sampling (NumPy implementation)
     """
 
     def __init__(
@@ -150,8 +131,6 @@ class Word2Vec:
         self.vocabulary_size = vocabulary_size
         self.embedding_dimensions = embedding_dimensions
         self.learning_rate = learning_rate
-
-        # Initialize embeddings randomly (small values for stability)
         self.W_in = np.random.uniform(
             -0.5 / embedding_dimensions,
             0.5 / embedding_dimensions,
@@ -165,75 +144,81 @@ class Word2Vec:
 
     @staticmethod
     def _sigmoid(x):
-        return 1 / (1 + np.exp(-x))
+        return 1 / (1 + np.exp(-np.clip(x, -10, 10)))
 
     def forward_backward(
-        self, centers: np.ndarray, contexts: np.ndarray, negatives: np.ndarray
-    ) -> float:
+        self, contexts: np.ndarray, targets: np.ndarray, negatives: np.ndarray
+    ):
         """
-        Perform forward & backward pass on one mini-batch.
-
-        centers  : (B,) array of center word IDs
-        contexts : (B,) array of true context word IDs
+        contexts: (B, 2*window) array of word IDs
+        targets : (B,) array of target word IDs
         negatives: (B, K) array of negative word IDs
         """
+        batch_size, context_size = contexts.shape
+        negative_size = negatives.shape[1]
 
-        # 1. Lookup embeddings
-        v_c = self.W_in[centers]
-        u_o = self.W_out[contexts]
-        u_k = self.W_out[negatives]
+        # 1. Average context embeddings
+        v_context = self.W_in[contexts]  # (B, C, D)
+        h = np.mean(v_context, axis=1)
 
-        # 2. Positive scores and loss
-        positive_dot = np.sum(v_c * u_o, axis=1)
+        # 2. Positive score
+        u_target = self.W_out[targets]  # (B, D)
+        positive_dot = np.sum(h * u_target, axis=1)  # (B, )
         positive_sigmoid = self._sigmoid(positive_dot)
         loss_positive = -np.log(positive_sigmoid + 1e-10)
 
-        # 3. Negative scores and loss
-        negative_dot = np.einsum("bd,bkd->bk", v_c, u_k)
+        # 3. Negative score
+        u_negative = self.W_out[negatives]  # (B, K, D)
+        negative_dot = np.einsum("bd, bkd->bk", h, u_negative)
         negative_sigmoid = self._sigmoid(-negative_dot)
         loss_negative = -np.sum(np.log(negative_sigmoid + 1e-10), axis=1)
 
         loss = np.mean(loss_positive + loss_negative)
 
         # 4. Backpropagation
-        # Gradients w.r.t positive pair
-        gradient_positive = (positive_sigmoid - 1)[:, np.newaxis] * u_o
-        # Gradients w.r.t negative pairs
-        gradient_negative = (1 - negative_sigmoid)[:, :, np.newaxis] * (-u_k)
-        gradient_v = gradient_positive + np.sum(gradient_negative, axis=1)
+        gradient_h = (positive_sigmoid - 1)[:, np.newaxis] * u_target + np.sum(
+            (1 - negative_sigmoid)[:, :, np.newaxis] * (-u_negative), axis=1
+        )
+        # Distribute gradient_h equally to all context embeddings
+        gradient_v_context = gradient_h[:, np.newaxis, :] / context_size
+        np.add.at(self.W_in, contexts, -self.learning_rate * gradient_v_context)
 
-        # 5. Update embeddings
-        # Update W_in
-        self.W_in[centers] -= self.learning_rate * gradient_v
-        # Update W_out for positive contexts
-        grad_u_o = (positive_sigmoid - 1)[:, np.newaxis] * v_c
-        self.W_out[contexts] -= self.learning_rate * grad_u_o
-        # Update W_out for negatives
-        grad_u_k = (1 - negative_sigmoid)[:, :, np.newaxis] * (-v_c[:, np.newaxis, :])
-        np.add.at(self.W_out, negatives, self.learning_rate * grad_u_k)
+        # Update output embeddings
+        gradient_u_target = (positive_sigmoid - 1)[:, np.newaxis] * h
+        self.W_out[targets] -= self.learning_rate * gradient_u_target
+
+        gradient_u_negative = (1 - negative_sigmoid)[:, :, np.newaxis] * (
+            -h[:, np.newaxis, :]
+        )
+        np.add.at(self.W_out, negatives, self.learning_rate * gradient_u_negative)
 
         return loss
 
 
-# ---------------------- Trainer ---------------------- #
 class Trainer:
     """
     Handles the training loop for Word2Vec.
     """
 
-    def __init__(self, model: Word2Vec, dataset: Dataset, tokenizer: Tokenizer):
+    def __init__(self, model: CBOW, dataset: Dataset, tokenizer: Tokenizer):
         self.model = model
         self.dataset = dataset
         self.tokenizer = tokenizer
         self.loss_history = []
 
-    def train(self, epochs: int = 5, batch_size: int = 8, log_interval: int = 10):
+    def train(
+        self,
+        epochs: int = 5,
+        batch_size: int = 8,
+        log_interval: int = 10,
+        steps_per_epoch: int = 50,
+    ):
         print("Training started...")
         start_time = time.time()
 
         for epoch in range(epochs):
             epoch_loss = []
-            for step in range(len(self.dataset.pairs) // batch_size):
+            for step in range(steps_per_epoch):
                 centers, contexts, negatives = self.dataset.get_batch(batch_size)
                 loss = self.model.forward_backward(centers, contexts, negatives)
                 epoch_loss.append(loss)
@@ -261,7 +246,6 @@ class Trainer:
         target_id = self.tokenizer.word_to_index[word]
         target_vector = self.model.W_in[target_id]
 
-        # Computer cosine similarities
         similarities = (
             self.model.W_in
             @ target_vector
@@ -271,11 +255,22 @@ class Trainer:
             )
         )
 
-        best_ids = np.argsort(-similarities)[1 : topK + 1]
-
-        return [
-            (self.tokenizer.index_to_word[i], float(similarities[i])) for i in best_ids
+        # Ensure indices are valid Python ints within vocab size
+        best_ids = np.argsort(-similarities)[: topK + 1]
+        best_ids = [
+            int(i)
+            for i in best_ids
+            if i < len(self.tokenizer.vocabulary) and i != target_id
         ]
+
+        results = []
+        for i in best_ids[:topK]:
+            if i in self.tokenizer.index_to_word:
+                results.append(
+                    (self.tokenizer.index_to_word[i], float(similarities[i]))
+                )
+
+        return results
 
 
 # ---------------------- Visualizer ---------------------- #
@@ -284,7 +279,7 @@ class Visualizer:
     Projects learned embeddings into 2D and visualizes them.
     """
 
-    def __init__(self, model: Word2Vec, tokenizer: Tokenizer):
+    def __init__(self, model: CBOW, tokenizer: Tokenizer):
         self.model = model
         self.tokenizer = tokenizer
 
@@ -310,7 +305,7 @@ class Visualizer:
         for i, word in enumerate(words):
             plt.text(reduced[i, 0], reduced[i, 1] + 0.02, word, fontsize=12)
 
-        plt.title("Word Embeddings Projection (PCA)")
+        plt.title("CBOW Projection (PCA)")
         plt.xlabel("PC1")
         plt.ylabel("PC2")
         plt.grid(True)
@@ -360,14 +355,14 @@ def main():
         negative_samples=10,
     )
 
-    model = Word2Vec(
+    model = CBOW(
         vocabulary_size=len(tokenizer.vocabulary),
         embedding_dimensions=50,
         learning_rate=0.01,
     )
 
     trainer = Trainer(model, dataset, tokenizer)
-    trainer.train(epochs=10, batch_size=128, log_interval=50)
+    trainer.train(epochs=10, batch_size=128, log_interval=5, steps_per_epoch=50)
 
     print(trainer.most_similar("intelligence"))
     print(trainer.most_similar("data"))
