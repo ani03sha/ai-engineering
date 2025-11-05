@@ -8,8 +8,6 @@ import wikipedia
 
 
 # ---------------------- Tokenizer ---------------------- #
-
-
 class Tokenizer:
     """
     Handles text preprocessing:
