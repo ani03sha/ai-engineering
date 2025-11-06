@@ -84,11 +84,11 @@ class Dataset:
         word_frequencies = Counter(self.encoded_corpus)
         probabilities = np.zeros(self.vocabulary_size)
         for i in range(self.vocabulary_size):
-            probabilities[i] = word_frequencies.get(i, 0) * 0.75
+            probabilities[i] = word_frequencies.get(i, 0) ** 0.75
         probabilities /= sum(probabilities)
         return probabilities
 
-    def get_batch(self, batch_size: int = 0):
+    def get_batch(self, batch_size: int):
         contexts, targets, negatives = [], [], []
         for _ in range(batch_size):
             center_position = np.random.randint(
@@ -292,7 +292,7 @@ class Visualizer:
 
         # Extract embeddings
         words = list(self.tokenizer.vocabulary)[:n]
-        vectors = self.model.W_in
+        vectors = self.model.W_in[:n]
 
         # Reduce to 2D
         pca = PCA(n_components=2)
